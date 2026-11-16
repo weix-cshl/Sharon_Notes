@@ -23,7 +23,7 @@ Source SOP: [GrameneGenomesBuildSOP58](https://docs.google.com/document/d/193rAN
 - Deliver Gramene 70: a self-hosted EnsemblPlants 63 browser on Ensembl 116 code, served from `/usr/local/ensembl-116` on ayinger (`/usr/local/ensembl-live` points to it).
 - User-facing features: genome, variation and comparative views; species pages; BioMart; BLAST (EBI REST); HMMER (link to EBI phmmer); and three local tools — VEP, Assembly Converter and ID History Converter.
 - Gramene adds what EnsemblPlants does not: its own branding and search endpoint (`data.gramene.org/ebeye<release>`), local VCF-backed variation tracks, and control over which tools run and where.
-- Status (G70): code installed including ensembl-hive 2.7.0 and ensembl-taxonomy; assembly chain data refreshed; 989 species pages and 284 images installed; Assembly Converter jobs complete; beekeeper running; ID History Converter patched, awaiting web retest.
+- Status (G70): code installed including ensembl-hive 2.7.0 and ensembl-taxonomy; assembly chain data refreshed; 989 species pages and 284 images installed; taxon tree regenerated (267 species); Assembly Converter jobs complete; beekeeper running; ID History Converter patched, awaiting web retest.
 - Out of scope: producing new genome data, running the EnsemblPlants production pipelines, and BLAST execution (EBI hosts it). Track hub speed and the Compara cactus alignment view (HALXS not built) are known gaps, not build blockers.
 
 ## 2. Inputs and methods
@@ -35,7 +35,16 @@ Source SOP: [GrameneGenomesBuildSOP58](https://docs.google.com/document/d/193rAN
 - **Code.** `setup_ensembl_live.sh` clones Ensembl and EG packages; re-run `fetch_eg_packages.sh` and `fetch_ensembl_packages.sh` after the EG release until nothing new arrives. Add ensembl-hive (G70: `version/2.7.0`), ensembl-pipeline and ensembl-taxonomy.
 - **Dependencies.** Build htslib, Bio::DB::HTS and `ensembl-variation/C_code`. Apache and the hive both need `/usr/local/bin/perl` 5.36, which has DBI, DBD::mysql and (G70) DateTime::Format::ISO8601.
 - **Configuration.** Plugins load in order: public-plugins → eg-web-common → eg-web-plants → gramene-live. Gramene settings live in `gramene-live/gramene/conf/SiteDefs.pm` and `ini-files/` (DEFAULTS, MULTI, per species); `ENSEMBL_SITETYPE` must be `'Ensembl Plants'`.
-- **Static content.** `copy_files_to_websites.pl --release=116-63 --division=plants` from ensembl-static (G70). Build `taxon_tree_data.js` for the BLAST species tree.
+- **Static content.** `copy_files_to_websites.pl --release=116-63 --division=plants` from ensembl-static (G70). This copies species text and images only; it does not build the taxon tree.
+- **Taxon tree.** `gramene-live/gramene/htdocs/taxon_tree_data.js` feeds the species selector (BLAST and other tools). Regenerate it every release with `eg-web-common/utils/dump_taxon_tree.pl`, which reads the core databases and `ncbi_taxonomy_<Ensembl version>` on colden:
+  ```
+  /usr/local/bin/perl ensembl-webcode/utils/dump_ensembl_valid_species.pl \
+   | /usr/local/bin/perl eg-web-common/utils/dump_taxon_tree.pl \
+       --host colden.cshl.edu --port 3306 --user gramene_web --pass <DB password> \
+       --thost colden.cshl.edu --tport 3306 --tuser gramene_web --tpass <DB password> \
+       --version 116 --plugin-dir <output dir>
+  ```
+  It writes `<output dir>/htdocs/taxon_tree_data.js`; copy that into `gramene-live/gramene/htdocs/`. Check that every leaf key opens `http://localhost/<key>/Info/Index` with 200. Apache serves it as a static file, so no restart is needed. G70: 267 species (was 157), commit 39333a8.
 - **Tools.** Create the tools database (`create_tools_db.pl`), initialize the hive (`init_pipeline.pl`), start `beekeeper_manager.pl` as `nobody`. Tool data lives in `tools_data/`: VEP cache named by Ensembl version (116), chain files, and toplevel FASTA symlinked for CrossMap.
 
 ### Data availability
@@ -98,4 +107,5 @@ The site runs on one of two VMs, ayinger and paulaner, alternating each release.
 | Expression, literature and search widgets fail | EBI certificate checks fail from the VM | Set `PERL_LWP_SSL_VERIFY_HOSTNAME = 0` in the widget modules, or use Gramene search |
 | HMMER form returns "method not allowed" | EBI changed the phmmer endpoint | Link directly to EBI phmmer from `ToolsTable.pm` |
 | Gramene logo missing (Gramene 69) | Custom CSS was never committed | Commit `02_page_template.css` to gramene-ensembl |
+| Species selector misses species or links to 404 pages (Gramene 70) | `taxon_tree_data.js` was left from an old release; EnsemblPlants renamed some species with assembly accessions (e.g. `Solanum_lycopersicum` → `Solanum_lycopersicum_GCA_000188115.5cm`) | Regenerate it with `dump_taxon_tree.pl` each release (see Taxon tree in section 2) |
 | Compara cactus alignment view fails | HALXS XS module not built | Open: build HALXS in ensembl-compara |
