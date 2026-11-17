@@ -23,7 +23,7 @@ Source SOP: [GrameneGenomesBuildSOP58](https://docs.google.com/document/d/193rAN
 - Deliver Gramene 70: a self-hosted EnsemblPlants 63 browser on Ensembl 116 code, served from `/usr/local/ensembl-116` on ayinger (`/usr/local/ensembl-live` points to it).
 - User-facing features: genome, variation and comparative views; species pages; BioMart; BLAST (EBI REST); HMMER (link to EBI phmmer); and three local tools — VEP, Assembly Converter and ID History Converter.
 - Gramene adds what EnsemblPlants does not: its own branding and search endpoint (`data.gramene.org/ebeye<release>`), local VCF-backed variation tracks, and control over which tools run and where.
-- Status (G70): code installed including ensembl-hive 2.7.0 and ensembl-taxonomy; assembly chain data refreshed; 989 species pages and 284 images installed; taxon tree regenerated (267 species); Assembly Converter jobs complete; beekeeper running; ID History Converter patched, awaiting web retest.
+- Status (G70): code installed including ensembl-hive 2.7.0 and ensembl-taxonomy; assembly chain data refreshed; 989 species pages and 284 images installed; taxon tree regenerated (267 species); EVA VCFs for teff, bean and cacao in place; download links moved to the EnsemblPlants 63 archive; VEP switched to the read-only `vep_ro` account, awaiting retest after the htslib fix; Assembly Converter jobs complete; beekeeper running; ID History Converter patched, awaiting web retest.
 - Out of scope: producing new genome data, running the EnsemblPlants production pipelines, and BLAST execution (EBI hosts it). Track hub speed and the Compara cactus alignment view (HALXS not built) are known gaps, not build blockers.
 
 ## 2. Inputs and methods
@@ -46,6 +46,13 @@ Source SOP: [GrameneGenomesBuildSOP58](https://docs.google.com/document/d/193rAN
   ```
   It writes `<output dir>/htdocs/taxon_tree_data.js`; copy that into `gramene-live/gramene/htdocs/`. Check that every leaf key opens `http://localhost/<key>/Info/Index` with 200. Apache serves it as a static file, so no restart is needed. G70: 267 species (was 157), commit 39333a8.
 - **Tools.** Create the tools database (`create_tools_db.pl`), initialize the hive (`init_pipeline.pl`), start `beekeeper_manager.pl` as `nobody`. Tool data lives in `tools_data/`: VEP cache named by Ensembl version (116), chain files, and toplevel FASTA symlinked for CrossMap.
+  - **VEP database account.** `ENSEMBL_VEP_SCRIPT_DEFAULT_OPTIONS` in `gramene/conf/SiteDefs.pm` uses `vep_ro`, a passwordless SELECT-only account on colden limited to ayinger (143.48.220.243), with `password => undef`. VEP writes its full command line into each job's `stats.txt`, which users can see, so the account must have no password. Don't set a VEP password in `gramene-private` either; it would override this and the login would fail. Grants: SELECT on `%\_core\_%`, `%\_variation\_%`, `%\_otherfeatures\_%` (add `%\_funcgen\_%` if regulatory annotation is needed).
+  - **htslib on `PATH`.** The VEP job and the results page both run plain `bgzip` and `tabix`. They must be working builds in `/usr/local/bin`. G70 found the 2017 builds broken (they need `libcrypto.so.10`); replace them with the htslib 1.17 build from `/usr/local/src/htslib` (`bgzip`, `tabix`, `htsfile`). `samtools`, `md5fa` and `md5sum-lite` in `/usr/local/bin` have the same problem.
+- **Gramene customizations** (gramene-live, branch `gramene-ensembl-70`):
+  - Gene-page search links: Gramene Search for all species, plus Sorghumbase Search (Sorghum_bicolor NCBIv3), GrameneOryza (Oryza_sativa IRGSP-1.0) and GrameneMaize Search (Zea_mays Zm-B73-REFERENCE-NAM-5.0). See `Gramene-species-search-skills.md`.
+  - Download links on species home pages (`Component/Info/HomePage.pm`) and the FTP table (`Document/HTML/FTPtable.pm`) point to the EnsemblPlants archive, `https://ftp.ensemblgenomes.ebi.ac.uk/pub/plants/release-63/`. They use two new SiteDefs variables, `EG_FTP_RELEASE_VERSION = 63` and `EG_FTP_URL`. `SITE_RELEASE_VERSION_EG` stays 70 because other code uses it. Archive folders are named by production name, and VCF-only species (teff, bean, cacao) have no GVF/VCF folders.
+  - The header Downloads link goes to `/info/data/ftp/index.html`; the logo goes to `https://dev.gramene.org/main/v70/` (switch back to www.gramene.org at go-live).
+- **Housekeeping crons** (scripts in `gramene/utils/`, installed in `/usr/local/ensembl-116`): `rotate_logs.sh` at 01:00 every Monday keeps one week of Apache logs; `clean_tmp_img.sh` at midnight on the 1st deletes images older than 30 days, and empty folders, in `tmp/img/tmp/temporary/`.
 
 ### Data availability
 
@@ -56,7 +63,8 @@ Source SOP: [GrameneGenomesBuildSOP58](https://docs.google.com/document/d/193rAN
 | Upstream databases | `ftp.ensemblgenomes.org/pub/release-63/plants/mysql` |
 | VEP cache | `.../release-63/plants/variation/indexed_vep_cache` → `tools_data/vep` |
 | Assembly chains | `.../release-63/plants/assembly_chain` → `tools_data/assembly_chain` (update note: `update_note_2026-10-23.txt`) |
-| Variation VCFs | `/usr/local/vcf`, linked as `data_files`; paths set in `eg-web-plants/conf/json/` |
+| Variation VCFs | `/usr/local/vcf` (`DATAFILE_BASE_PATH`), linked as `data_files`; paths set in `eg-web-plants/conf/json/<species>_vcf.json` |
+| EVA VCFs (teff, bean, cacao) | `/usr/local/vcf/eva` → `/usr/local/tools_data/eva`. Teff from `ftp.ebi.ac.uk/pub/databases/eva/PRJEB62522/`, with the `Chromosome_` prefix stripped and re-indexed (`.tbi`); the original is in `eva_original/` |
 | Server root | `ayinger:/usr/local/ensembl-116` |
 | Tools and hive databases | `ensembl_web_tools_ayinger`, `ensembl_web_hive_ayinger` |
 | Beekeeper fixes | [Tools Hive Beekeeper Fixes](https://claude.ai/artifact/BR9XpM9TAaKPq4hNeuXJmg) |
@@ -84,6 +92,9 @@ The site runs on one of two VMs, ayinger and paulaner, alternating each release.
 - **Config caches:** delete `conf/*.config.packed` after code changes, `conf/packed/<Species>.packed` after core changes, `conf/packed/MULTI.packed` after compara changes; delete `beekeeper.config` and `.pid` before restarting the beekeeper.
 - **Silent failures:** `init_pipeline.pl` and `beekeeper_manager.pl` hide errors. Check `hive_meta` after init and the job's `stderr.log` after a failure; adding `die $@ if $@` to the init wrapper is proposed.
 - **Credentials:** database passwords appear in `beekeeper.config`, job logs, the hive `analysis_data` table and the source SOP. Restrict files with `chmod 600`, replace passwords in the SOP with placeholders, and rotate after sharing logs.
+  - Since G70, no password is in git. They live in an untracked plugin, `/usr/local/ensembl-116/gramene-private` (`conf/SiteDefs.pm` for the user DB; `conf/ini-files/DEFAULTS.ini` and `MULTI.ini` for the DB passwords). It's listed first in `conf/Plugins.pm` so it overrides gramene-live, and is owned `weix:nobody`, mode 640. Copy it by hand to each new build.
+  - Push gramene-live over SSH (`git@github.com:warelab/gramene-ensembl.git`) with `git push origin gramene-ensembl-70`. `push.default=matching` makes a bare `git push` also try the stale `master`.
+  - VEP: see the `vep_ro` account in section 2. `stats.txt` files from earlier jobs still contain the old VEP password, so rotate it.
 - **Open decisions:** whether to commit all local patches upstream-safe in gramene-ensembl; whether to build HALXS for cactus alignments; whether to keep alternating ayinger and paulaner or settle on one VM.
 
 ## Appendix A · system architecture
@@ -108,4 +119,14 @@ The site runs on one of two VMs, ayinger and paulaner, alternating each release.
 | HMMER form returns "method not allowed" | EBI changed the phmmer endpoint | Link directly to EBI phmmer from `ToolsTable.pm` |
 | Gramene logo missing (Gramene 69) | Custom CSS was never committed | Commit `02_page_template.css` to gramene-ensembl |
 | Species selector misses species or links to 404 pages (Gramene 70) | `taxon_tree_data.js` was left from an old release; EnsemblPlants renamed some species with assembly accessions (e.g. `Solanum_lycopersicum` → `Solanum_lycopersicum_GCA_000188115.5cm`) | Regenerate it with `dump_taxon_tree.pl` each release (see Taxon tree in section 2) |
+| VEP job succeeds but the results table is empty (Gramene 70) | `/usr/local/bin/bgzip` can't load `libcrypto.so.10`. `bgzip -c tmp > output.vcf` empties the output, then bgzip crashes, leaving `output.vcf` at 0 bytes. | Install htslib 1.17 `bgzip`/`tabix`/`htsfile` in `/usr/local/bin` and re-submit the job; the lost output can't be recovered |
+| DB password visible in VEP job `stats.txt` (Gramene 70) | VEP records its whole command line, including `--password` | Use the passwordless read-only account `vep_ro` (section 2); rotate the old password |
+| VEP `.web` summary has fewer rows than variants (Gramene 70, unconfirmed) | Probably `--fork 4`: each forked worker opens the file with `>` | Doesn't affect the results table; watch after the bgzip fix |
+| Gramene Search panel: "Can't locate object method get_gene_display_link" (Gramene 70) | Lines copied from Gene::Summary into `GrameneSearch.pm`; that method is in Component::Summary, not Component::Gene. Fails only for genes with a display xref. | Removed the unused lookups (commit cf0a57e) |
+| Gene pages 500 with "Reference node is same as the new node" after adding a menu node | `create_node(...)` was wrapped in `$menu->after(...)` | `create_node` already appends the node; don't wrap it |
+| Teff, bean and cacao variant tracks empty (Gramene 70) | The `_vcf.json` paths point to `/usr/local/vcf/eva/...`, which didn't exist. Teff's EVA file names chromosomes `Chromosome_1A`; the site tries `1A`, then the GenBank synonym, never that name. | Symlink `vcf/eva` → `tools_data/eva`; download teff and strip the prefix (see Data availability) |
+| FTP table links 404 (Gramene 70) | Links used URL names, not production names (gca genomes, Avena strains), plus GVF/VCF links for VCF-only species, and the Gramene release number | Fixed in `FTPtable.pm` with production names and `EG_FTP_*` (commit f27d428) |
+| AlphaFold 3D viewer: "An error occurred while loading the 3D protein viewer" | The viewer runs in the browser against `rest.ensembl.org`; that REST service was returning 500 (even `info/ping`) | Nothing to fix locally; check `curl https://rest.ensembl.org/info/ping` and retry when it returns `{"ping":1}` |
+| "ERROR FETCHING FILE https://interactions.rest.ensembl.org/..." in the log after restart | EBI's interactions REST returns 500 | Harmless warning; the page loads without it |
+| Command-line `tabix`/`samtools` fail with `libcrypto.so.10` (Gramene 70) | 2017 builds in `/usr/local/bin` linked against OpenSSL 1.0 | Use `/usr/local/ensembl-live/htslib/tabix`, or rebuild |
 | Compara cactus alignment view fails | HALXS XS module not built | Open: build HALXS in ensembl-compara |
